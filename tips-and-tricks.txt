@@ -1,0 +1,139 @@
+A list of the important configurations, as well as the various small problems encountered during the implementation of the MSc thesis. Hopefully this proves helpful to the researchers and future students interested in playing around with the Raspberry Pi and Pure Data.
+
+3.6.2016
+Jussi Nieminen
+
+PD
+
+- Many input arguments with (t_struct *x, t_symbol *s, int argc, t_atom *argv) and A_GIMME flag specified in setup method.
+- In and out channels are ordered clockwise according to the object box, e.g. in stereo: in_L, in_R, out_R, out_L
+- List outlet:
+	outlet_list(t_outlet *x, t_symbol *s, int argc, t_atom *argv);
+	SETFLOAT(t_atom *, t_float);
+- pack object sends the list only when the leftmost inlet is banged
+	* route other parameters to the leftmost inlet through a bang message
+
+NETWORK
+
+- connect to the raspberries with ssh
+	username: pi
+	password: raspberry
+- For IP-address configuration, edit /etc/dhcpcd.conf by adding the following lines
+	profile static_eth0
+	static	ip_address 192.168.1.11/24
+	static routers 192.168.1.1
+	static domain_name_servers=192.168.1.1
+
+	interface eth0
+	fallback static_eth0
+
+	* This creates a static network profile where the raspberry automatically falls back to if dhcp fails, i.e. no Internet connection is available.
+ 	* The IP address can be anything between 192.168.1.2 and 192.168.1.254. The /24 is a network mask.
+
+	https://www.raspberrypi.org/forums/viewtopic.php?f=66&t=140252
+
+- On the host computer, when running ´ifup eth0´ if you encounter an error "Can't allocate interface etlease{ failed to bring up eth0.."
+	Fix by removing /var/lib/dhcp/dhclient.* (Flushes the dhclient list)
+
+FFTW
+
+- Build as a shared lib and with single precision (float) mode
+- ARM-specific configure flags
+	--enable-neon (adds SIMD support)
+	--with-slow-timer (ARM doesn't support cycle counters by default)
+	--build=arm-gnueabihf (compile for ARM architecture!!)
+		Probably Makes most of the following compiler flags redundant
+
+		CC="arm-linux-gnueabihf-gcc -march=armv7ve -mtune=cortex-a7 -mfpu=neon -mfloat-abi=hard -ftree-vectorize -funsafe-math-optimizations"
+
+		...but it doesn't hurt to specify at least -mtune and -mfloat as they vary between models, as well as -ftree-vectorize and -funsafe-math-optimizations which arrange instructions so that NEON is optimally utilized.
+
+	./configure --enable-shared --enable-float --enable-neon --with-slow-timer CC="<compiler_flags>"
+	make
+	sudo make install
+
+- benchfftw is built similarly except you only need --enable-single and --build=arm-gnueabihf
+
+BCAST~ / BCRECEIVE~
+
+- bcast keeps outputting a constant stream of data. Even if no input file is loaded/read, the stream outputs zeros to the network.
+- if you want to debug or profile the code include -g compiler flag and comment out --strip-unneeded in the makefile
+	* this way debuggers are able to show functions and line numbers and profilers are able to create annotations.
+
+CONV~
+
+- build with -fPIC flag and link -lfftw3f
+- Raspberry Pi 2 is 32 bit arch. DO NOT USE the long datatype in networking. Long is interpreted as 64bit datatype in x86_54 and 32bit in armv7! Use either int32_t or int64_t instead.
+- Complex multiplication:
+	Re = Re_x * Re_h - Im_x * Im_h
+	Im = Im_x * Re_h + Re_x * Im_h
+
+LINKING
+
+- lc links C standard library, -lm links the math library
+- dependence goes from left to right
+- For static linking, give the path to <your_library>.a (and just use gcc)
+
+ARM & CODE OPTIMIZATION
+
+- Use at least the following compiler flags to optimize the code!
+	"arm-linux-gnueabihf-gcc -march=armv7ve -mtune=cortex-a7 -mfpu=neon -mfloat-abi=hard -ftree-vectorize -funsafe-math-optimizations -O2"
+- Comparing iterators to zero in loops is fastest in the ARM processor
+- Use memset and memcpy when moving or initializing chunks of data
+- Use 32bit datatypes whenever possible to ensure aligned memory access
+- Organizing the members of the struct in a certain order might optimize memory accesses
+
+RASPBIAN CONFIGURATION AND OPTIMIZATION
+
+- run raspi-config (or edit /boot/config.txt)
+	* Internationalization Options -> Keyboard Layout
+	* Set Overclock to "High" preset:
+		arm_freq 		1GHz
+		sdram_freq		500Hz
+		over_voltage	2
+	* Expand Filesystem (if you want to expand the filesystem to use the full SD-card space at next reboot)
+
+- Set scheduling priorities in /etc/security/limits.conf
+- Set CPU frequency scaling to perfomance
+- Stop all unnecessary background processes
+- Run PD with real-time flag
+
+HIFIBERRY
+
+- run raspi-config (or edit /boot/config.txt) and set dtoverlay=hifiberry-dacplus
+- edit (or create) /etc/asound.conf and write the following script
+
+pcm.!default{
+	type hw card 0
+}
+
+ctl.!default{
+	type hw card 0
+}
+
+- reboot and hifiberry should be enabled
+- test with aplay -l
+- You can change options, such as the interpolation filter type by running alsamixer
+
+OS X RELATED ISSUES
+
+- The maximum network datagram size on the tested MacBook is 1500 bytes. With the IP and UDP headers (20 + 8 bytes) we have to set DEFAULT_UDP_PACKT_SIZE 1472 in netsend~.h and bcast~.h
+- float_cast.h does not work on OS X. Fix by commenting out the __MACH__ and __APPLE__ section. This way the standarc C float cast functions are used.
+- Pure Data header is found in /Applications/Pd-<version>.app/COntents/Resources/src
+- Pure Data externals are in /Applications/Pd-<version>.app/COntents/Resources/extra
+
+PROFILERS
+
+- oprofile requires
+	libbfd (in binutils-dev)
+	libiberty-dev
+	popt
+- valgrind tools have problems with FFTW3. Valgrind crashes when fftw3 creates fft plans.
+- perf runs but freezes when creating a report (might just take hours to generate one and I wasn't patient enough...)
+
+KERNEL COMPILING (TODO)
+
+Check the following guides.
+
+https://www.raspberrypi.org/documentation/linux/kernel/building.md
+http://sysprogs.com/VisualKernel/tutorials/raspberry/buildkernel/
